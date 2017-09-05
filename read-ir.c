@@ -3,13 +3,16 @@
 
 #if (defined(__AVR__))
 #include <avr\pgmspace.h>
+#define assert(x)
 
 #elif (defined(__PUREC__))
 #define PROGMEM
 #include <stdio.h>
+#include <assert.h>
 
 #else
 #include <pgmspace.h>
+#define assert(x)
 
 #endif
 
@@ -20,6 +23,12 @@
 #define TNEC 562
 #define TKADEN 425
 #define TSONY 600
+
+#define TYPE_UNKNOWN 0xff
+#define TYPE_DATA 0
+#define TYPE_SAME_AS_FIRST 1
+#define TYPE_REPEATER 2
+#define TYPE_SEPARATOR 3
 
 #define ARRAYSIZE_U8(x) ((uint8_t)(sizeof(x)/sizeof(x[0])))
 
@@ -56,13 +65,13 @@ const RemoFormat remoFormat[] PROGMEM = {
 
 
 typedef struct RemoData_t {
-  uint8_t type; // 0:data 1:same as first 2:repeat code 3:separator
+  uint8_t type; // TYPE_xxx
   union {
     struct {
       uint8_t len;
       uint8_t data[1]; // size are greater than or equal to 1
     } data;
-    unsigned long separator;
+    uint32_t separator;
   };
 } RemoData;
 
@@ -72,36 +81,41 @@ typedef struct Remo_t {
   uint8_t format; // 0:unknown 1:nec 2:kadenkyo 3:sony
   uint8_t dataNum;
   uint8_t dataOffset[10];
+
+  // work variables
+  uint8_t readByte;
+  uint8_t readPos;
+  uint8_t readState;
+  uint16_t leader[2];
 } Remo;
 
 
 RemoData *_remoDataPtr(int8_t index);
 void _incrementRemoData();
-int8_t _parseLeader(uint32_t time);
+int8_t _parseLeader(uint32_t time, uint8_t signal);
 int8_t _parseData(uint32_t time, uint8_t signal);
 
 Remo *remo;
 RemoData *remoData;
 
-uint8_t readByte;
-uint8_t readPos = 0;
-uint16_t leader[2];
-
 void initRemo(void *buffer, uint8_t size) {
   memset(buffer, 0, size);
   remo = (Remo*)buffer;
   remoData = (RemoData*)(buffer + sizeof(Remo));
-  remo->dataNum = 1;
-  leader[0] = leader[1] = 0;
+  //remo->dataNum = 1;
 }
 
 
 // @return less than 0:error 0:keep reading 1:end
 int8_t parseRemo(uint32_t time, uint8_t signal) {
-  if (remo->format == FMT_UNKNOWN) {
-    if (_parseLeader(time) < 0)
+  int8_t ret;
+  if (remo->readState == 0) {
+    ret = _parseLeader(time, signal);
+    if (ret < 0)
       return -1;
-  } else {
+    if (ret == 1)
+      remo->readState = 1;
+  } else if (remo->readState == 1) {
     int8_t ret = _parseData(time, signal);
     if (ret < 0)
       return -1;
@@ -127,33 +141,55 @@ RemoData *_remoDataPtr(int8_t index) {
 }
 
 void _incrementRemoData() {
-  uint8_t size = sizeof(RemoData);
-  RemoData *cur = _remoDataPtr(-1);
-  if (cur->type == 0) {
-    size += cur->data.len;
+  if (remo->dataNum == 0) {
+    remo->dataOffset[remo->dataNum] = 0;
+  } else {
+    uint8_t size = sizeof(RemoData);
+    RemoData *cur = _remoDataPtr(-1);
+    if (cur->type == 0) {
+      size += cur->data.len - 2; // -2 is padding area
+    }
+    remo->dataOffset[remo->dataNum] = remo->dataOffset[remo->dataNum-1] + size;
   }
   remo->dataNum++;
-  remo->dataOffset[remo->dataNum-1] = remo->dataOffset[remo->dataNum-2] + size;
 }
 
-int8_t _parseLeader(uint32_t time) {
-  if (time > 32767)
+int8_t _parseLeader(uint32_t time, uint8_t signal) {
+  if (time > 32767) {
     return -1;
-  if (leader[0] == 0) {
-    leader[0] = (uint16_t)time;
+  }
+
+  uint16_t *pl = remo->leader;
+  if (signal == 0) {
+    pl[0] = (uint16_t)time;
     return 0;
   }
-  leader[1] = (uint16_t)time;
+
+  pl[1] = (uint16_t)time;
   for (uint8_t i=0; i<ARRAYSIZE_U8(remoFormat); i++) {
     const RemoFormat *prf = &remoFormat[i];
-    if (leader[0] < prf->leader[0][0] || prf->leader[0][1] < leader[0])
-      continue;
-    if (prf->leader[1][0] != 0) {
-      if (leader[1] < prf->leader[1][0] || prf->leader[1][1] < leader[1])
-        continue;
+    uint8_t type = TYPE_UNKNOWN;
+    if (prf->leader[0][0] <= pl[0] && pl[0] <= prf->leader[0][1]) {
+      if (prf->leader[1][0] == 0) {
+        type = TYPE_DATA; // SONY
+      } else {
+        // NEC or KADENKYO
+        if (prf->leader[1][0] <= pl[1] && pl[1] <= prf->leader[1][1]) {
+          type = TYPE_DATA;
+        } else if (prf->repeater[0] <= pl[1] && pl[1] <= prf->repeater[1]) {
+          type = TYPE_REPEATER;
+        }
+      }
     }
-    remo->format = i + 1; // FMT_NEC, FMT_NEC or FMT_SONY
+    if (type == TYPE_UNKNOWN) {
+      continue;
+    }
+    assert(remo->format == FMT_UNKNOWN || remo->format == i + 1);
+    remo->format = i + 1; // FMT_NEC, FMT_KADENKYO or FMT_SONY
     printf("format => %d\n", remo->format);
+    _incrementRemoData();
+    RemoData *cur = _remoDataPtr(-1);
+    cur->type = type;
     return 1;
   }
   return -2;

@@ -5,10 +5,10 @@ TARGET=a.out
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	gcc -o $@ $+
+	gcc -g -o $@ $+
 
 %.o: %.c
-	gcc -W -Wall -Wextra -Wconversion -Wno-unused-parameter -D__PUREC__ -c -o $@ $<
+	gcc -g -W -Wall -Wextra -Wconversion -Wno-unused-parameter -D__PUREC__ -c -o $@ $<
 
 clean:
 	rm -f *.o $(TARGET)

@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include "read-ir.h"
 
 int main() {
@@ -8,9 +9,13 @@ int main() {
   uint8_t buff[64];
   initRemo(buff, sizeof(buff));
   uint8_t signal = 0;
+  int8_t ret = 100;
   for (int i=0; i<(int)(sizeof(remoData)/sizeof(remoData[0])); i++) {
-    parseRemo(remoData[i], signal);
+    ret = parseRemo(remoData[i], signal);
+    if (ret != 0)
+      break;
     signal = !signal;
   }
+  printf("ret=%d\n", ret);
   outRemo();
 }

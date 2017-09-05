@@ -68,10 +68,15 @@ typedef struct RemoData_t {
   uint8_t type; // TYPE_xxx
   union {
     struct {
+      // data length
       uint8_t len;
-      uint8_t data[1]; // size are greater than or equal to 1
+      // size are greater than or equal to 1
+      uint8_t data[1];
     } data;
-    uint32_t separator;
+
+    // unit is 1us * 8 = 8us.
+    // if time is 200ms then 'separator' value are 25000 (== 200*1000/8).
+    uint16_t separator;
   };
 } RemoData;
 
@@ -85,15 +90,17 @@ typedef struct Remo_t {
   // work variables
   uint8_t readByte;
   uint8_t readPos;
-  uint8_t readState;
+  uint8_t readState; // 0:unknown 1:parsing data
   uint16_t leader[2];
 } Remo;
 
 
 RemoData *_remoDataPtr(int8_t index);
-void _incrementRemoData();
+void _incrementRemoData(void);
 int8_t _parseLeader(uint32_t time, uint8_t signal);
 int8_t _parseData(uint32_t time, uint8_t signal);
+void _storeData(void);
+void _storeSeparator(uint32_t time);
 
 Remo *remo;
 RemoData *remoData;
@@ -106,7 +113,7 @@ void initRemo(void *buffer, uint8_t size) {
 }
 
 
-// @return less than 0:error 0:keep reading 1:end
+// @return <0:error 0:keep reading 1:end
 int8_t parseRemo(uint32_t time, uint8_t signal) {
   int8_t ret;
   if (remo->readState == 0) {
@@ -118,9 +125,12 @@ int8_t parseRemo(uint32_t time, uint8_t signal) {
   } else if (remo->readState == 1) {
     int8_t ret = _parseData(time, signal);
     if (ret < 0)
-      return -1;
+      return -2;
     else if (ret == 1)
       return 1;
+    else if (ret == 2) {
+      remo->readState = 0;
+    }
   }
   return 0;
 }
@@ -140,14 +150,14 @@ RemoData *_remoDataPtr(int8_t index) {
   return (RemoData*)(ptr + remo->dataOffset[index]);
 }
 
-void _incrementRemoData() {
+void _incrementRemoData(void) {
   if (remo->dataNum == 0) {
     remo->dataOffset[remo->dataNum] = 0;
   } else {
     uint8_t size = sizeof(RemoData);
     RemoData *cur = _remoDataPtr(-1);
     if (cur->type == 0) {
-      size += cur->data.len - 2; // -2 is padding area
+      size += cur->data.len;
     }
     remo->dataOffset[remo->dataNum] = remo->dataOffset[remo->dataNum-1] + size;
   }
@@ -160,7 +170,7 @@ int8_t _parseLeader(uint32_t time, uint8_t signal) {
   }
 
   uint16_t *pl = remo->leader;
-  if (signal == 0) {
+  if (signal == 1) {
     pl[0] = (uint16_t)time;
     return 0;
   }
@@ -195,28 +205,68 @@ int8_t _parseLeader(uint32_t time, uint8_t signal) {
   return -2;
 }
 
+// @return <0: error 0:keep reading 1:end data 2:want next leader
 int8_t _parseData(uint32_t time, uint8_t signal) {
   const RemoFormat *prf = &remoFormat[remo->format - 1];
   const uint8_t timingEdge = (prf->leader[1][0] == 0) ? 0 : 1;
+  uint8_t goodBreak = (remo->readPos == 0);
   if (signal == timingEdge) {
     if (time < prf->data0[0])
       return -1;
     if (time <= prf->data0[1])
       return 0;
-    if (timingEdge == 0) {
-      // NEC or KADENKYO
-      if (prf->leader[0][0] <= time && time <= prf->leader[0][1])
-        ; // TODO:データが調度終わっているかcheckして終わっているなら、新しいデータ or リピーターとして繰越
-    } else {
-      // SONY
-      if (prf->leader[0][1] < time) {
-        ; // TODO:データが調度終わっているかcheckして終わっているなら、セパレーターとして繰越
+    if (goodBreak) {
+      if (timingEdge == 1) {
+        // NEC or KADENKYO
+        if (prf->leader[0][0] <= time && time <= prf->leader[0][1]) {
+          remo->leader[0] = (uint16_t)time;
+          return 2;
+        }
+      } else {
+        // SONY
+        if (prf->leader[0][1] < time) {
+          _storeSeparator(time);
+          return 2;
+        }
       }
     }
-    return -1;
+    return -2;
   } else {
-    if (prf->data1[0] <= time && time <= prf->leader[0][1])
-      ;
+    if (prf->data0[0] <= time && time <= prf->data0[1]) {
+      remo->readByte &= ~(1 << (7 - remo->readPos));
+      _storeData();
+      return 0;
+    }
+    if (prf->data1[0] <= time && time <= prf->data1[1]) {
+      remo->readByte |= (1 << (7 - remo->readPos));
+      _storeData();
+      return 0;
+    }
+    if (goodBreak) {
+      if (timingEdge == 1) {
+        // NEC or KADENKYO
+        if (prf->leader[0][1] < time) {
+          _storeSeparator(time);
+          return 2;
+        }
+      }
+    }
   }
   return 0;
+}
+
+void _storeData(void) {
+  remo->readPos++;
+  if (remo->readPos == 8) {
+    RemoData *cur = _remoDataPtr(-1);
+    cur->data.data[cur->data.len++] = remo->readByte;
+    remo->readPos = 0;
+  }
+}
+
+void _storeSeparator(uint32_t time) {
+  _incrementRemoData();
+  RemoData *cur = _remoDataPtr(-1);
+  cur->type = TYPE_SEPARATOR;
+  cur->separator = (uint16_t)(time >> 3);
 }

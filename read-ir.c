@@ -258,7 +258,7 @@ int8_t _parseLeader(uint32_t time, uint8_t signal) {
     RemoFrame *cur = _remoFramePtr(-1);
     cur->type = (unsigned)(type & 0x3);
     cur->dataLen = 0;
-    cur->time = 0;
+    //cur->time = 0;
     return 1;
   }
   return -2;

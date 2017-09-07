@@ -90,10 +90,11 @@ typedef struct Remo_t {
   uint8_t frameOffset[10];
 
   // work variables
-  uint8_t readState; // 0:unknown 1:parsing frame
-  uint16_t leader[2];
+  uint32_t frameTime;
+  uint32_t sumT;
   uint16_t numT;
-  uint16_t sumT;
+  uint16_t leader[2];
+  uint8_t readState; // 0:unknown 1:parsing frame
 } Remo;
 
 
@@ -127,9 +128,9 @@ int8_t parseRemo(uint32_t time, uint8_t signal) {
       remo->readState = 1;
       RemoFrame *cur = _remoFramePtr(-1);
       const RemoFormat *prf = &remoFormat[remo->format - 1];
-      uint16_t ltime = (uint16_t)(remo->leader[0] + remo->leader[1]) >> 3;
-      cur->time = ltime;
-      remo->sumT = (uint16_t)(remo->sumT + time);
+      remo->frameTime = (uint32_t)(remo->leader[0] + remo->leader[1]);
+      cur->time = (uint16_t)(remo->frameTime >> 3);
+      remo->sumT += time;
       if (cur->type == TYPE_DATA)
         remo->numT = (uint16_t)(remo->numT + prf->t.leader);
       else // == TYPE_REPEATER
@@ -162,7 +163,7 @@ void outRemo() {
   }
   if (i>0)
     averageFrame = averageFrame / i;
-  printf("avarage     : %d, %d (T, frame) [us]\n", averageT << 3, averageFrame << 3);
+  printf("avarage     : %d, %d (T, frame) [us]\n", averageT, averageFrame << 3);
   printf("format      : %s\n", formatStr[remo->format]);
   printf("frameNum    : %d\n", remo->frameNum);
   printf("frameOffset :");
@@ -170,13 +171,14 @@ void outRemo() {
     printf(" %02x", remo->frameOffset[i]);
   }
   printf("\n");
-  printf("work        : %d {%04x, %04x}\n",
+  printf("work        : %d %d %d %d {%04x, %04x}\n",
+         remo->frameTime, remo->sumT, remo->numT,
          remo->readState,
          remo->leader[0], remo->leader[1]);
   printf("frames      : [");
   for (int8_t i=0; i<remo->frameNum; i++) {
     RemoFrame *p = _remoFramePtr(i);
-    uint32_t time = (uint32_t)(p->time << 3);
+    uint32_t time = p->time << 3;
     if (i>0)
       printf(", ");
     printf("%s", typeStr[p->type]);
@@ -260,7 +262,6 @@ int8_t _parseLeader(uint32_t time, uint8_t signal) {
     RemoFrame *cur = _remoFramePtr(-1);
     cur->type = (unsigned)(type & 0x3);
     cur->dataBits = 0;
-    //cur->time = 0;
     return 1;
   }
   return -2;
@@ -271,12 +272,13 @@ int8_t _parseData(uint32_t time, uint8_t signal) {
   const RemoFormat *prf = &remoFormat[remo->format - 1];
   const uint8_t timingEdge = (prf->leader[1][0] == 0) ? 0 : 1;
   RemoFrame *cur = _remoFramePtr(-1);
-  cur->time = (uint16_t)(cur->time + (time >> 3));
+  remo->frameTime += time;
+  cur->time = (uint16_t)(remo->frameTime >> 3);
   if (signal == timingEdge) {
     if (time < prf->data0[0])
       return -1;
     if (time <= prf->data0[1]) {
-      remo->sumT = (uint16_t)(remo->sumT + (time >> 3));
+      remo->sumT += time;
       remo->numT++;
       return 0;
     }
@@ -312,7 +314,7 @@ void _storeData(uint8_t v, uint32_t time) {
   const RemoFormat *prf = &remoFormat[remo->format - 1];
   uint8_t *p = &cur->data[cur->dataBits >> 3];
   uint8_t bit = (uint8_t)(1 << (7 - (cur->dataBits & 0x7)));
-  remo->sumT = (uint16_t)(remo->sumT + (time >> 3));
+  remo->sumT += time;
   if (v == 0) {
     *p = (uint8_t)((*p) & (uint8_t)(~bit));
     remo->numT = (uint16_t)(remo->numT + prf->t.data0);

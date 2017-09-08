@@ -13,8 +13,10 @@ int main() {
 
 
 
-  uint8_t buff[128];
-  initRemo(buff, sizeof(buff));
+  uint8_t work[sizeof(RemoWork)]; // size==8
+  //uint8_t buff[128];
+  uint8_t buff[40];
+  initRemo(buff, sizeof(buff), work);
   uint8_t signal = 1;
   int8_t ret = 100;
   for (int i=0; i<(int)(sizeof(remoData)/sizeof(remoData[0])); i++) {
@@ -28,13 +30,12 @@ int main() {
 
   for (int i=0; i<(int)sizeof(buff); i++) {
     if (i % 16 == 0) {
-      printf("%02x:", i);
+      printf("\n%02x:", i);
     }
     if (i % 16 == 8) {
       printf(" ");
     }
     printf(" %02x", buff[i]);
-    if (i % 16 == 15)
-      printf("\n");
   }
+  printf("\n");
 }

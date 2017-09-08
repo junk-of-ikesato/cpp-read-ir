@@ -72,79 +72,58 @@ const RemoFormat remoFormat[] PROGMEM = {
 };
 
 
-typedef struct RemoFrame_t {
-  // unit is 1us * 8 = 8us.
-  // if time is 200ms then 'time' value are 25000 (== 200*1000/8).
-  uint16_t time;
-  // TYPE_xxx
-  uint8_t type;
-  // data length of bits
-  uint8_t dataBits;
-  // size are greater than or equal to 1
-  uint8_t data[0];
-} RemoFrame;
 
-typedef struct Remo_t {
-  uint8_t format; // 0:unknown 1:nec 2:kadenkyo 3:sony
-  uint8_t frameNum;
-  uint8_t frameOffset[10];
-
-  // work variables
-  uint32_t frameTime;
-  uint32_t sumT;
-  uint16_t numT;
-  uint16_t leader[2];
-  uint8_t readState; // 0:unknown 1:parsing frame
-} Remo;
-
-
-RemoFrame *_remoFramePtr(int8_t index);
-void _incrementRemoFrame(void);
 
 int8_t _parseLeader(uint32_t time, uint8_t signal);
 int8_t _parseData(uint32_t time, uint8_t signal);
-void _storeData(uint8_t v, uint32_t time);
-void _storeFrameTime(uint32_t time);
+int8_t _storeData(uint8_t v, uint32_t time);
 void _applySameData(void);
 
 Remo *remo;
 RemoFrame *remoFrame;
+RemoWork *work;
 
-void initRemo(void *buffer, uint8_t size) {
-  memset(buffer, 0, size);
+void initRemo(void *buffer, uint8_t buffSize, void *workBuff) {
+  if (workBuff != NULL) {
+    memset(workBuff, 0, sizeof(RemoWork));
+  }
+  work = workBuff;
+
+  memset(buffer, 0, buffSize);
   remo = (Remo*)buffer;
   remoFrame = (RemoFrame*)(buffer + sizeof(Remo));
+  work->frameBuffSize = (uint8_t)(buffSize - sizeof(Remo));
 }
 
 
 // @return <0:error 0:keep reading 1:end
 int8_t parseRemo(uint32_t time, uint8_t signal) {
   int8_t ret;
-  if (remo->readState == 0) {
+  if (work->readState == 0) {
     ret = _parseLeader(time, signal);
     if (ret < 0)
-      return -1;
+      return (int8_t)(-10+ret);
     if (ret == 1) {
-      remo->readState = 1;
-      RemoFrame *cur = _remoFramePtr(-1);
+      work->readState = 1;
+      RemoFrame *cur = remoFramePtr(-1);
       const RemoFormat *prf = &remoFormat[remo->format - 1];
-      remo->frameTime = (uint32_t)(remo->leader[0] + remo->leader[1]);
+      remo->frameTime = (uint32_t)(work->leader[0] + work->leader[1]);
       cur->time = (uint16_t)(remo->frameTime >> 3);
-      remo->sumT += time;
+      remo->t += time;
       if (cur->type == TYPE_DATA)
-        remo->numT = (uint16_t)(remo->numT + prf->t.leader);
+        work->numT = (uint16_t)(work->numT + prf->t.leader);
       else // == TYPE_REPEATER
-        remo->numT = (uint16_t)(remo->numT + prf->t.repeater);
+        work->numT = (uint16_t)(work->numT + prf->t.repeater);
     }
-  } else if (remo->readState == 1) {
+  } else if (work->readState == 1) {
     int8_t ret = _parseData(time, signal);
     if (ret < 0)
-      return -2;
+      return (int8_t)(-20+ret);
     else if (ret == 1)
       return 1;
     else if (ret == 2) {
       _applySameData();
-      remo->readState = 0;
+      work->readState = 0;
     }
   }
   return 0;
@@ -154,11 +133,11 @@ void outRemo() {
   static const char *formatStr[] = {"UNKNOWN", "NEC", "KADENKYO", "SONY"};
   static const char *typeStr[] = {"UNKNOWN", "DATA", "SAME", "REP"};
   RemoFrame *p;
-  uint32_t averageT = (uint32_t)(remo->numT != 0 ? remo->sumT / remo->numT : 0);
+  uint32_t averageT = (uint32_t)(work->numT != 0 ? remo->t / work->numT : 0);
   uint32_t averageFrame=0;
   uint16_t i;
   for (i=0; i<remo->frameNum-1; i++) {
-    p = _remoFramePtr((int8_t)i);
+    p = remoFramePtr((int8_t)i);
     averageFrame += p->time;
   }
   if (i>0)
@@ -172,13 +151,13 @@ void outRemo() {
   }
   printf("\n");
   printf("work        : %d %d %d %d {%04x, %04x}\n",
-         remo->frameTime, remo->sumT, remo->numT,
-         remo->readState,
-         remo->leader[0], remo->leader[1]);
+         remo->frameTime, remo->t, work->numT,
+         work->readState,
+         work->leader[0], work->leader[1]);
   printf("frames      : [");
   for (int8_t i=0; i<remo->frameNum; i++) {
-    RemoFrame *p = _remoFramePtr(i);
-    uint32_t time = p->time << 3;
+    RemoFrame *p = remoFramePtr(i);
+    uint32_t time = (uint32_t)(p->time << 3);
     if (i>0)
       printf(", ");
     printf("%s", typeStr[p->type]);
@@ -200,7 +179,7 @@ void outRemo() {
 
 
 
-RemoFrame *_remoFramePtr(int8_t index) {
+RemoFrame *remoFramePtr(int8_t index) {
   //uint8_t i;
   uint8_t *ptr = (uint8_t*)remoFrame;
   if (index == -1) {
@@ -209,12 +188,12 @@ RemoFrame *_remoFramePtr(int8_t index) {
   return (RemoFrame*)(ptr + remo->frameOffset[index]);
 }
 
-void _incrementRemoFrame(void) {
+int8_t incrementRemoFrame(void) {
   if (remo->frameNum == 0) {
     remo->frameOffset[remo->frameNum] = 0;
   } else {
     uint8_t size = sizeof(RemoFrame);
-    RemoFrame *cur = _remoFramePtr(-1);
+    RemoFrame *cur = remoFramePtr(-1);
     if (cur->type == TYPE_DATA) {
       uint8_t len = (uint8_t)((cur->dataBits + 7) >> 3);
       size = (uint8_t)(size + len);
@@ -222,8 +201,12 @@ void _incrementRemoFrame(void) {
     uint8_t offset = (uint8_t)(remo->frameOffset[remo->frameNum-1] + size);
     offset = (uint8_t)((offset+1) & ~0x1); // add padding
     remo->frameOffset[remo->frameNum] = offset;
+    if (work->frameBuffSize < offset + sizeof(RemoFrame)) {
+      return -1;
+    }
   }
   remo->frameNum++;
+  return 0;
 }
 
 int8_t _parseLeader(uint32_t time, uint8_t signal) {
@@ -231,7 +214,7 @@ int8_t _parseLeader(uint32_t time, uint8_t signal) {
     return -1;
   }
 
-  uint16_t *pl = remo->leader;
+  uint16_t *pl = work->leader;
   if (signal == 1) {
     pl[0] = (uint16_t)time;
     return 0;
@@ -258,28 +241,30 @@ int8_t _parseLeader(uint32_t time, uint8_t signal) {
     }
     assert(remo->format == FMT_UNKNOWN || remo->format == i + 1);
     remo->format = (uint8_t)(i + 1); // FMT_NEC, FMT_KADENKYO or FMT_SONY
-    _incrementRemoFrame();
-    RemoFrame *cur = _remoFramePtr(-1);
+    if (incrementRemoFrame() != 0) {
+      return -2;
+    }
+    RemoFrame *cur = remoFramePtr(-1);
     cur->type = (unsigned)(type & 0x3);
     cur->dataBits = 0;
     return 1;
   }
-  return -2;
+  return -3;
 }
 
 // @return <0: error 0:keep reading 1:end data 2:want next leader
 int8_t _parseData(uint32_t time, uint8_t signal) {
   const RemoFormat *prf = &remoFormat[remo->format - 1];
   const uint8_t timingEdge = (prf->leader[1][0] == 0) ? 0 : 1;
-  RemoFrame *cur = _remoFramePtr(-1);
+  RemoFrame *cur = remoFramePtr(-1);
   remo->frameTime += time;
   cur->time = (uint16_t)(remo->frameTime >> 3);
   if (signal == timingEdge) {
     if (time < prf->data0[0])
       return -1;
     if (time <= prf->data0[1]) {
-      remo->sumT += time;
-      remo->numT++;
+      remo->t += time;
+      work->numT++;
       return 0;
     }
     if (timingEdge == 0) {
@@ -291,12 +276,10 @@ int8_t _parseData(uint32_t time, uint8_t signal) {
     return -2;
   } else {
     if (prf->data0[0] <= time && time <= prf->data0[1]) {
-      _storeData(0, time);
-      return 0;
+      return _storeData(0, time) == 0 ? 0 : -3;
     }
     if (prf->data1[0] <= time && time <= prf->data1[1]) {
-      _storeData(1, time);
-      return 0;
+      return _storeData(1, time) == 0 ? 0 : -3;
     }
     if (timingEdge == 1) {
       // NEC or KADENKYO
@@ -304,34 +287,39 @@ int8_t _parseData(uint32_t time, uint8_t signal) {
         return 2;
       }
     }
-    return -3;
+    return -4;
   }
   return 0;
 }
 
-void _storeData(uint8_t v, uint32_t time) {
-  RemoFrame *cur = _remoFramePtr(-1);
+int8_t _storeData(uint8_t v, uint32_t time) {
+  RemoFrame *cur = remoFramePtr(-1);
   const RemoFormat *prf = &remoFormat[remo->format - 1];
   uint8_t *p = &cur->data[cur->dataBits >> 3];
   uint8_t bit = (uint8_t)(1 << (7 - (cur->dataBits & 0x7)));
-  remo->sumT += time;
+
+  if (((uint8_t*)remoFrame + work->frameBuffSize) <= p)
+    return -1;
+
+  remo->t += time;
   if (v == 0) {
     *p = (uint8_t)((*p) & (uint8_t)(~bit));
-    remo->numT = (uint16_t)(remo->numT + prf->t.data0);
+    work->numT = (uint16_t)(work->numT + prf->t.data0);
   } else {
     *p = (uint8_t)((*p) | (uint8_t)bit);
-    remo->numT = (uint16_t)(remo->numT + prf->t.data1);
+    work->numT = (uint16_t)(work->numT + prf->t.data1);
   }
   *p = (uint8_t)((*p) & (uint8_t)(~(bit-1)));
   cur->dataBits++;
+  return 0;
 }
 
 void _applySameData(void) {
   if (remo->frameNum <= 1)
     return;
-  RemoFrame *cur = _remoFramePtr(-1);
+  RemoFrame *cur = remoFramePtr(-1);
   if (cur->type == TYPE_DATA) {
-    RemoFrame *first = _remoFramePtr(0);
+    RemoFrame *first = remoFramePtr(0);
     if (cur->dataBits == first->dataBits) {
       uint8_t len = (uint8_t)((cur->dataBits + 7) >> 3);
       if (memcmp(cur->data, first->data, len) == 0) {

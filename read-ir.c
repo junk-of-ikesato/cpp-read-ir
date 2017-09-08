@@ -1,16 +1,19 @@
 #include "read-ir.h"
-#include <memory.h>
 
 #if (defined(__AVR__))
-#include <avr\pgmspace.h>
+#include <stdlib.h>
+#include <avr/pgmspace.h>
 #define assert(x)
 
 #elif (defined(__PUREC__))
 #define PROGMEM
 #include <stdio.h>
 #include <assert.h>
+#include <memory.h>
+
 
 #else
+#include <Arduino.h>
 #include <pgmspace.h>
 #define assert(x)
 

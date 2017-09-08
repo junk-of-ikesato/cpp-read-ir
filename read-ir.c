@@ -20,6 +20,12 @@
 #endif
 
 #define DEBUG
+#define OUTRAW
+
+#ifdef OUTRAW
+static uint16_t signals[512];
+static uint16_t numSignal;
+#endif
 
 #define MARGIN 0.2
 #define MARGINL(x) (uint16_t)(x*(1-MARGIN))
@@ -98,12 +104,19 @@ void initRemo(void *buffer, uint8_t buffSize, void *workBuff) {
   remo = (Remo*)buffer;
   remoFrame = (RemoFrame*)(buffer + sizeof(Remo));
   work->frameBuffSize = (uint8_t)(buffSize - sizeof(Remo));
+
+  #ifdef OUTRAW
+  numSignal = 0;
+  #endif
 }
 
 
 // @return <0:error 0:keep reading 1:end
 int8_t parseRemo(uint32_t time, uint8_t signal) {
   int8_t ret;
+  #ifdef OUTRAW
+    signals[numSignal++] = (uint16_t)(time >= 65536 ? 65535 : time);
+  #endif
   if (work->readState == 0) {
     ret = _parseLeader(time, signal);
     if (ret < 0)
@@ -148,6 +161,7 @@ void outRemo() {
   }
   if (i>0)
     averageFrame = averageFrame / i;
+  printf("\n");
   printf("avarage     : %d, %d (T, frame) [us]\n", averageT, averageFrame << 3);
   printf("format      : %s\n", formatStr[remo->format]);
   printf("frameNum    : %d\n", remo->frameNum);
@@ -156,9 +170,10 @@ void outRemo() {
     printf(" %02x", remo->frameOffset[i]);
   }
   printf("\n");
-  printf("work        : %d %d %d %d {%04x, %04x}\n",
-         remo->frameTime, remo->t, work->numT,
+  printf("work        : %d %d %d %d {%d, %d}\n",
+         work->numT, remo->t,
          work->readState,
+         work->frameBuffSize,
          work->leader[0], work->leader[1]);
   printf("frames      : [");
   for (int8_t i=0; i<remo->frameNum; i++) {
@@ -180,6 +195,17 @@ void outRemo() {
     printf("(%d[us])", time);
   }
   printf("]\n");
+
+  #ifdef OUTRAW
+  printf("\nraw:", i);
+    for (uint16_t i=0; i<numSignal; i++) {
+      if (i>0) {
+        printf(",");
+      }
+      printf("%d", signals[i]);
+    }
+    printf("\n");
+  #endif
 #endif
 }
 

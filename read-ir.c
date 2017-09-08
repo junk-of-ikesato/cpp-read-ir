@@ -16,6 +16,8 @@
 
 #endif
 
+#define DEBUG
+
 #define MARGIN 0.2
 #define MARGINL(x) (uint16_t)(x*(1-MARGIN))
 #define MARGINR(x) (uint16_t)(x*(1+MARGIN))
@@ -130,6 +132,7 @@ int8_t parseRemo(uint32_t time, uint8_t signal) {
 }
 
 void outRemo() {
+#ifdef DEBUG
   static const char *formatStr[] = {"UNKNOWN", "NEC", "KADENKYO", "SONY"};
   static const char *typeStr[] = {"UNKNOWN", "DATA", "SAME", "REP"};
   RemoFrame *p;
@@ -174,6 +177,7 @@ void outRemo() {
     printf("(%d[us])", time);
   }
   printf("]\n");
+#endif
 }
 
 

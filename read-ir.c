@@ -88,6 +88,7 @@ const RemoFormat remoFormat[] PROGMEM = {
 int8_t _parseLeader(uint32_t time, uint8_t signal);
 int8_t _parseData(uint32_t time, uint8_t signal);
 int8_t _storeData(uint8_t v, uint32_t time);
+int8_t _recoverData(void);
 void _applySameData(void);
 
 Remo *remo;
@@ -119,6 +120,10 @@ int8_t parseRemo(uint32_t time, uint8_t signal) {
   #endif
   if (work->readState == 0) {
     ret = _parseLeader(time, signal);
+    if (ret == -2 && remo->frameNum > 1) {
+      // enough data is already stored
+      return 1;
+    }
     if (ret < 0)
       return (int8_t)(-10+ret);
     if (ret == 1) {
@@ -135,6 +140,11 @@ int8_t parseRemo(uint32_t time, uint8_t signal) {
     }
   } else if (work->readState == 1) {
     int8_t ret = _parseData(time, signal);
+    if (ret == -3) {
+      if (_recoverData() == 0) {
+        return 1;
+      }
+    }
     if (ret < 0)
       return (int8_t)(-20+ret);
     else if (ret == 1)
@@ -233,10 +243,11 @@ int8_t incrementRemoFrame(void) {
     }
     uint8_t offset = (uint8_t)(remo->frameOffset[remo->frameNum-1] + size);
     offset = (uint8_t)((offset+1) & ~0x1); // add padding
-    remo->frameOffset[remo->frameNum] = offset;
-    if (work->frameBuffSize < offset + sizeof(RemoFrame)) {
+    if (remo->frameNum >= ARRAYSIZE_U8(remo->frameOffset) ||
+        work->frameBuffSize < offset + sizeof(RemoFrame)) {
       return -1;
     }
+    remo->frameOffset[remo->frameNum] = offset;
   }
   remo->frameNum++;
   return 0;
@@ -344,6 +355,14 @@ int8_t _storeData(uint8_t v, uint32_t time) {
   }
   *p = (uint8_t)((*p) & (uint8_t)(~(bit-1)));
   cur->dataBits++;
+  return 0;
+}
+
+int8_t _recoverData(void) {
+  if (remo->frameNum <= 1)
+    return -1;
+  // enough data is already stored
+  remo->frameNum--;
   return 0;
 }
 

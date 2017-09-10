@@ -23,7 +23,7 @@
 #define OUTRAW
 
 #ifdef OUTRAW
-static uint16_t signals[512];
+static uint32_t signals[512];
 static uint16_t numSignal;
 #endif
 
@@ -41,6 +41,7 @@ static uint16_t numSignal;
 #define TYPE_REPEATER 3
 
 #define ARRAYSIZE_U8(x) ((uint8_t)(sizeof(x)/sizeof(x[0])))
+#define ARRAYSIZE_U16(x) ((uint16_t)(sizeof(x)/sizeof(x[0])))
 
 typedef struct RemoFormat_t {
   uint16_t leader[2][2];
@@ -116,6 +117,7 @@ void initRemo(void *buffer, uint8_t buffSize, void *workBuff) {
 int8_t parseRemo(uint32_t time, uint8_t signal) {
   int8_t ret;
   #ifdef OUTRAW
+  if (numSignal < ARRAYSIZE_U16(signals))
     signals[numSignal++] = (uint16_t)(time >= 65536 ? 65535 : time);
   #endif
   if (work->readState == 0) {

@@ -127,7 +127,7 @@ int8_t parseRemo(uint32_t time, uint8_t signal) {
       const RemoFormat *prf = &remoFormat[remo->format - 1];
       remo->frameTime = (uint32_t)(work->leader[0] + work->leader[1]);
       cur->time = (uint16_t)(remo->frameTime >> 3);
-      remo->t += time;
+      remo->edgeTime += (uint32_t)(work->leader[0] + work->leader[1]);
       if (cur->type == TYPE_DATA)
         work->numT = (uint16_t)(work->numT + prf->t.leader);
       else // == TYPE_REPEATER
@@ -152,7 +152,7 @@ void outRemo() {
   static const char *formatStr[] = {"UNKNOWN", "NEC", "KADENKYO", "SONY"};
   static const char *typeStr[] = {"UNKNOWN", "DATA", "SAME", "REP"};
   RemoFrame *p;
-  uint32_t averageT = (uint32_t)(work->numT != 0 ? remo->t / work->numT : 0);
+  uint32_t averageT = (uint32_t)(work->numT != 0 ? remo->edgeTime / work->numT : 0);
   uint32_t averageFrame=0;
   uint16_t i;
   for (i=0; i<remo->frameNum-1; i++) {
@@ -171,7 +171,7 @@ void outRemo() {
   }
   printf("\n");
   printf("work        : %d %d %d %d {%d, %d}\n",
-         work->numT, remo->t,
+         work->numT, remo->edgeTime,
          work->readState,
          work->frameBuffSize,
          work->leader[0], work->leader[1]);
@@ -197,7 +197,7 @@ void outRemo() {
   printf("]\n");
 
   #ifdef OUTRAW
-  printf("\nraw:", i);
+  printf("\nraw:");
     for (uint16_t i=0; i<numSignal; i++) {
       if (i>0) {
         printf(",");
@@ -296,7 +296,7 @@ int8_t _parseData(uint32_t time, uint8_t signal) {
     if (time < prf->data0[0])
       return -1;
     if (time <= prf->data0[1]) {
-      remo->t += time;
+      remo->edgeTime += time;
       work->numT++;
       return 0;
     }
@@ -334,7 +334,7 @@ int8_t _storeData(uint8_t v, uint32_t time) {
   if (((uint8_t*)remoFrame + work->frameBuffSize) <= p)
     return -1;
 
-  remo->t += time;
+  remo->edgeTime += time;
   if (v == 0) {
     *p = (uint8_t)((*p) & (uint8_t)(~bit));
     work->numT = (uint16_t)(work->numT + prf->t.data0);

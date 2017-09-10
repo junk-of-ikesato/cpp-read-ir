@@ -25,7 +25,7 @@ typedef struct Remo_t {
   uint8_t frameNum;
   uint8_t frameOffset[10];
   uint32_t frameTime;
-  uint32_t t; // minimun period time of data edge
+  uint32_t edgeTime; // minimun period time of data edge
 } Remo;
 
 typedef struct RemoWork_t {
